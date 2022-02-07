@@ -2,31 +2,71 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 
 	dapr "github.com/dapr/go-sdk/client"
+	"github.com/dapr/go-sdk/service/common"
+	daprd "github.com/dapr/go-sdk/service/http"
 	"github.com/julienschmidt/httprouter"
-	// daprd "github.com/dapr/go-sdk/service/grpc"
+)
+
+var (
+	logger  = log.New(os.Stdout, "", 0)
+	address = getEnvVar("ADDRESS", ":8181")
 )
 
 const storename string = "statestore"
 
+type productStock struct {
+	Id    string
+	stock int
+}
+
 func main() {
-	// // create a Dapr service server
-	// s, err := daprd.NewService(":50001")
-	// if err != nil {
-	// 	log.Fatalf("failed to start the server: %v", err)
-	// }
-	// // start the server
-	// if err := s.Start(); err != nil {
-	// 	log.Fatalf("server error: %v", err)
-	// }
+
+	s := daprd.NewService(address)
 
 	client, err := dapr.NewClient()
 	if err != nil {
 		log.Fatalf("Error creating client")
+	}
+
+	s.AddBindingInvocationHandler("get", func(ctx context.Context, in *common.BindingEvent) (out []byte, err error) {
+		itemId := in.Metadata["itemId"]
+
+		item, err := client.GetStateWithConsistency(context.TODO(), storename, itemId, map[string]string{}, dapr.StateConsistencyStrong)
+		if err != nil {
+			return nil, err
+		}
+
+		stock := &productStock{}
+		json.Unmarshal(item.Value, stock)
+
+		return nil, nil
+	})
+
+	// err = s.AddServiceInvocationHandler("get", func(ctx context.Context, in *common.InvocationEvent) (out *common.Content, err error) {
+
+	// 	json.Unmarshal()
+
+	// 	client.GetStateWithConsistency(context.TODO(), storename, ps.ByName("itemId"), map[string]string{}, dapr.StateConsistencyStrong)
+
+	// 	return nil, nil
+	// })
+
+	if err != nil {
+		logger.Fatalf("error starting service: %v", err)
+		os.Exit(1)
+	}
+
+	// start the service
+	if err := s.Start(); err != nil && err != http.ErrServerClosed {
+		logger.Fatalf("error starting service: %v", err)
 	}
 
 	router := httprouter.New()
@@ -68,4 +108,11 @@ func main() {
 	log.Println("Server running on localhost:8080")
 	log.Fatal(http.ListenAndServe("localhost:8080", router))
 
+}
+
+func getEnvVar(key, fallbackValue string) string {
+	if val, ok := os.LookupEnv(key); ok {
+		return strings.TrimSpace(val)
+	}
+	return fallbackValue
 }
